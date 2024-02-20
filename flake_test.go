@@ -14,7 +14,7 @@ func TestNewId(t *testing.T) {
 	}
 }
 
-func TestManyIds(t *testing.T) {
+func TestIdUniqueness(t *testing.T) {
 	var ids []goflake.Id
 
 	for i := 0; i < 100; i++ {
@@ -33,5 +33,11 @@ func TestManyIds(t *testing.T) {
 				t.Fail()
 			}
 		}
+	}
+}
+
+func BenchmarkNewIdPerf(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		goflake.NewId()
 	}
 }
