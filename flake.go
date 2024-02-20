@@ -16,6 +16,7 @@ var (
 
 	increment atomic.Int64
 	pid       int64
+	epoch     time.Time
 
 	timeStampBits int64 = 42
 	incrementBits int64 = 12
@@ -30,13 +31,18 @@ var (
 
 // Generates a new Snowflake ID that is guaranteed to be unique and sortable across generations.
 func NewId() *Id {
-	const layout = "2006-Jan-02"
-	tm, err := time.Parse(layout, Epoch)
-	if err != nil {
-		panic(err)
+	if epoch.IsZero() {
+		const layout = "2006-Jan-02"
+		tm, err := time.Parse(layout, Epoch)
+		if err != nil {
+			panic(err)
+		}
+
+		epoch = tm
 	}
 
-	ms := time.Since(tm).Milliseconds() & timeStampMask
+	ms := time.Since(epoch).Milliseconds() & timeStampMask
+
 	if pid == 0 {
 		pid = int64(os.Getpid()) & pidMask
 	}
@@ -45,6 +51,8 @@ func NewId() *Id {
 	inc := increment.Load() & int64(incrementMask)
 
 	v := (ms << (pidBits + randBits + incrementBits)) + (pid << (randBits + incrementBits)) + (rand << incrementBits) + inc
+
+	increment.Add(1)
 
 	return &Id{
 		Value: v,
