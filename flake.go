@@ -1,60 +1,95 @@
 package goflake
 
 import (
-	"math/rand"
-	"os"
-	"sync/atomic"
+	"errors"
+	"fmt"
+	"sync"
 	"time"
 )
 
-type Id struct {
-	Value int64
+type ID int64
+
+type Generator struct {
+	mu        sync.Mutex
+	lastTime  int64
+	nodeID    int64
+	increment int64
 }
 
-var (
-	Epoch string = "2015-Jan-01"
-
-	increment atomic.Int64
-	pid       int64
-	epoch     time.Time
-
-	timeStampBits int64 = 42
-	incrementBits int64 = 12
-	pidBits       int64 = 5
-	randBits      int64 = 5
-
-	timeStampMask int64 = (int64(1) << timeStampBits) - 1
-	pidMask       int64 = (1 << pidBits) - 1
-	randMask      int64 = (1 << randBits) - 1
-	incrementMask int64 = (1 << incrementBits) - 1
+const (
+	nodeIDBits    uint8 = 10
+	sequenceBits  uint8 = 12
+	maxNodeID     int64 = (1 << nodeIDBits) - 1
+	incrementMask int64 = (1 << sequenceBits) - 1
+	timeShift           = nodeIDBits + sequenceBits
+	nodeShift           = sequenceBits
 )
 
-// Generates a new Snowflake ID that is guaranteed to be unique and sortable across generations.
-func NewId() *Id {
-	if epoch.IsZero() {
-		const layout = "2006-Jan-02"
-		tm, err := time.Parse(layout, Epoch)
-		if err != nil {
-			panic(err)
+// Default is 2015-01-01T00:00:00Z, Discord's epoch
+var Epoch int64 = 1420070400000
+
+func NewGenerator(nodeID int64) (*Generator, error) {
+	if nodeID < 0 || nodeID > maxNodeID {
+		return nil, fmt.Errorf("node ID must be between 0 and %d", maxNodeID)
+	}
+	return &Generator{
+		nodeID: nodeID,
+	}, nil
+}
+
+func (g *Generator) Next() (ID, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// gets the diff between now and epoch, replacing the monotonic timer
+	now := time.Now().UnixMilli() - Epoch
+
+	// if we are generating a second ID within the same ms, increase increment by 1
+	if now == g.lastTime {
+		g.increment = (g.increment + 1) & incrementMask
+		// increment will be 0 for 4096, because we AND the mask above, wait for next ms to generate id
+		if g.increment == 0 {
+			for now <= g.lastTime {
+				now = time.Now().UnixMilli() - Epoch
+			}
 		}
-
-		epoch = tm
+	} else {
+		g.increment = 0
 	}
 
-	ms := time.Since(epoch).Milliseconds() & timeStampMask
-
-	if pid == 0 {
-		pid = int64(os.Getpid()) & pidMask
+	// protect against clock drift
+	if now < g.lastTime {
+		return 0, errors.New("clock moved backwards, refusing to generate ID")
 	}
 
-	rand := rand.Int63() & randMask
-	inc := increment.Load() & int64(incrementMask)
+	g.lastTime = now
 
-	v := (ms << (pidBits + randBits + incrementBits)) + (pid << (randBits + incrementBits)) + (rand << incrementBits) + inc
+	id := (now << timeShift) | (g.nodeID << nodeShift) | g.increment
 
-	increment.Add(1)
+	return ID(id), nil
+}
 
-	return &Id{
-		Value: v,
-	}
+// Time returns the timestamp portion of the ID in milliseconds since the Discord epoch.
+func (id ID) Time() int64 {
+	return (int64(id) >> timeShift)
+}
+
+// Node returns the node ID portion of the ID.
+func (id ID) Node() int64 {
+	return (int64(id) >> nodeShift) & maxNodeID
+}
+
+// Increment returns the sequence portion of the ID.
+func (id ID) Increment() int64 {
+	return int64(id) & incrementMask
+}
+
+// String returns the string representation of the ID.
+func (id ID) String() string {
+	return fmt.Sprintf("%d", id)
+}
+
+// Int64 returns the int64 representation of the ID.
+func (id ID) Int64() int64 {
+	return int64(id)
 }
