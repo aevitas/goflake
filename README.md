@@ -34,7 +34,7 @@ package main
 import (
 	"fmt"
 	"log"
-	"github.com/aevitas/goflake" // <-- Replace with your actual import path
+	"github.com/aevitas/goflake"
 )
 
 func main() {
